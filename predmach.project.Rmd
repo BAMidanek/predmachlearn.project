@@ -1,0 +1,167 @@
+
+### Practical Machine Learning Course Project
+### Human Activity Recognition: Predicting the Quality of Weight-Lifting Exercises
+#### Ben Midanek
+#### Sunday, October 26, 2014
+
+This report and the accompanying analysis are an attempt to predict the quality of weight-lifting exercises using raw data from wearable computing devices. This analysis is performed on the Weight Lifting Exercise Dataset from the Human Activity Recognition project, which can be found [here](http://groupware.les.inf.puc-rio.br/har). The original analysis and data collection were performed by Velloso et al (2013), whose paper is cited below:
+
+
+> Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013
+> Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3HI9bJxtZ
+
+
+### Preparing Data for Analysis
+
+The first step is to load the data and all the packages necessary to perform the analysis. 
+
+```{r loadpackages, cache=TRUE}
+      library(caret)
+      library(randomForest)
+```
+
+```{r downloaddata, eval=FALSE}
+      
+      download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                    "./pml-training.csv")
+      download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                    "./pml-testing.csv")
+```
+
+Once the data files were loaded into R, I chose to split the original training file into training and validation sets. Because the initial training dataset contained almost 20,000 observations, I wasn't very concerned about losing much accuracy in the training model. And given the types of models I would be fitting to the data -- regression trees --, I felt it was important to have an out-of-sample population on which to test my models so as to avoid overfitting. Once the data was split into training and validation sets, I converted numeric variables to numeric class and got rid of variables with majority of observations as NAs.
+
+```{r loaddata, cache=TRUE}
+
+      training <- read.csv("C:/Users/midanekb14/Desktop/Learning Data Science/Coursera - Practical Machine Learning/pml-training.csv")
+      testing <- read.csv("C:/Users/midanekb14/Desktop/Learning Data Science/Coursera - Practical Machine Learning/pml-testing.csv")
+
+# create validation and training sets
+
+      set.seed(1234)
+      inTrain <- createDataPartition(y=training$classe,
+                                     p=0.5,
+                                     list=F)
+      
+      train <- training[inTrain,]
+      validation <- training[-inTrain,]
+
+# convert numeric variables to numeric; get rid of variables with majority NAs
+      train[,8:159] <- sapply(train[,8:159], as.character)
+      train[,8:159] <- sapply(train[,8:159], as.numeric)
+
+      useVars <- names(train[apply(train, 2, function(x) sum(is.na(x))) < 100])
+      train1 <- train[,useVars]
+```
+
+In preperation for analysis, I decided to center and scale the quantitative variables, so that I could perform principal component analysis.
+
+
+```{r scale, cache=TRUE}
+      train1_scaled <- cbind(train1[,c(60, 2, 5)], scale(train1[,8:59]))
+      train1_scaled <- train1_scaled[, -c(2,3)]
+```
+
+I decided to manually group the variables according to bodypart before performing PCA. The idea behind this was that perhaps all of the readings from the device on the forearm could be reduced to a couple principal components that would capture what was happening with that bodypart during the exercise.
+
+```{r pca, cache=TRUE}
+beltVars <- grep("belt", names(train1_scaled))
+      beltProc <- preProcess(train1_scaled[,beltVars], method="pca", thresh=0.8)
+      beltTrainPC <- predict(beltProc, train1_scaled[,beltVars])
+      names(beltTrainPC) <- paste("belt_", names(beltTrainPC), sep = "")
+      
+      armVars <- grep("arm", names(train1_scaled))
+      armProc <- preProcess(train1_scaled[,armVars], method="pca", thresh=0.8)
+      armTrainPC <- predict(armProc, train1_scaled[,armVars])
+      names(armTrainPC) <- paste("arm_", names(armTrainPC), sep = "")
+      
+      dumbbellVars <- grep("dumbbell", names(train1_scaled))
+      dumbbellProc <- preProcess(train1_scaled[,dumbbellVars], method="pca", thresh=0.8)
+      dumbbellTrainPC <- predict(dumbbellProc, train1_scaled[,dumbbellVars])
+      names(dumbbellTrainPC) <- paste("dumbbell_", names(dumbbellTrainPC), sep = "")
+      
+      forearmVars <- grep("forearm", names(train1_scaled))
+      forearmProc <- preProcess(train1_scaled[,forearmVars], method="pca", thresh=0.8)
+      forearmTrainPC <- predict(forearmProc, train1_scaled[,forearmVars])
+      names(forearmTrainPC) <- paste("forearm_", names(forearmTrainPC), sep = "")
+      
+      trainPC <- cbind(classe = train1_scaled[,1], armTrainPC, 
+                       beltTrainPC, dumbbellTrainPC, forearmTrainPC)
+      
+      featurePlot(trainPC[,2:24], trainPC$classe)
+```
+
+
+### Training the Model
+
+First, I decided to fit two regression tree models to the data using rpart. Having just performed the PC analysis, I wanted to see if creating the principal components on the manually-grouped variables added any predictive value versus creating the PCs on the entire dataset. I also wanted to see if the principal components added any predictive value compared to just running the regression trees on the entire training set.
+
+```{r rpart, cache=TRUE}
+      
+      #modelFit <- train(classe ~ ., method = "rpart",
+      #                  preProcess = "pca", data = train1_scaled)
+      #modfit1 <- confusionMatrix(train1_scaled$classe, predict(modelFit, train1_scaled))
+      #modfit1
+      
+      #modelFit2 <- train(classe ~ ., data=trainPC, method = "rpart")
+      #modfit2 <- confusionMatrix(trainPC$classe, predict(modelFit2, trainPC))
+      #modfit2
+
+      #modelFit3 <- train(classe ~ ., method = "rpart",
+      #                   data=train1)
+      #modfit3 <- confusionMatrix(train1$classe, predict(modelFit3, train1))
+      #modfit3
+
+```
+
+As you can see in the confusion matrices, the PCA did not add any predictive value in these cases. The regression trees performed best on the full dataset, with 66% accuracy overall. While this model perfectly classified classes A and B, it erroneously classified all C, D, and E as classe E.
+
+Next, I decided to fit linear discriminant analysis (LDA) and quantile discriminant analysis (QDA) models.
+
+```{r lda}
+#       modelFit4 <- train(classe ~ ., data=train1_scaled, method = "lda")
+#       modfit4 <- confusionMatrix(train1_scaled$classe, predict(modelFit4, train1_scaled))
+#       modfit4
+# 
+#       modelFit5 <- train(classe ~ ., data=train1_scaled, method = "qda")
+#       modfit5 <- confusionMatrix(train1_scaled$classe, predict(modelFit5, train1_scaled))
+#       modfit5
+
+      # QDA model fitted on PC
+      # modelFit6 <- train(classe ~ ., data=trainPC, method = "qda")
+      # modfit6 <- confusionMatrix(trainPC$classe, predict(modelFit6, trainPC))
+      # modfit6
+```
+
+From the confusion matricies above, you can see that both of these models were significant improvements over the first few. The LDA model resulted in accurancy of 71%, while the QDA model had accuracy of 89.9%. The QDA model fit on the PC training set, however, was a step backwards, and I have chosen not to run this model here.
+
+Finally, I moved on the to the randomForest model.
+
+```{r rf, cache=TRUE}
+
+      modelFit7 <- randomForest(classe ~ ., data = train1_scaled, 
+                              ntree = 50,
+                              importance = TRUE,
+                              do.trace=TRUE)
+
+      confusionMatrix(train1_scaled$classe, predict(modelFit7, train1_scaled))
+```
+
+The random forest model was extremely impressive, accurately classifying 100% of observations. Clearly, this accuracy cannot be improved upon. The question now is whether this model was overfitting the data. I decided to run modelFit5 (the qda model) and modelFit7 on the validation set.
+
+
+
+```{r validation, cache=TRUE}
+
+# perpare the validation set for analysis
+      validation[,8:159] <- sapply(validation[,8:159], as.character)
+      validation[,8:159] <- sapply(validation[,8:159], as.numeric)
+      validation1 <- validation[,useVars]
+      validation1_scaled <- cbind(validation1[,c(60, 2, 5)], scale(validation1[,8:59]))
+      validation1_scaled <- validation1_scaled[, -c(2,3)]
+
+# evaluate modelFit5 and modelFit7 on the validation set
+      #confusionMatrix(validation1_scaled$classe, predict(modelFit5, validation1_scaled))
+      confusionMatrix(validation1_scaled$classe, predict(modelFit7, validation1_scaled))
+```
+
+The random forest model emerges as the clear winner here, accurately classifying 98.1% of the validation set.
